@@ -3,6 +3,16 @@
 Divide uno o más libros PDF en un archivo por capítulo, conservando el formato
 original mediante PyMuPDF.
 
+## Requisito
+
+Los lanzadores requieren **Python 3.10 o superior** instalado. No necesitas
+instalar ninguna librería manualmente: el script crea el entorno e instala todo
+lo demás.
+
+- **Windows:** descarga Python desde [python.org/downloads](https://www.python.org/downloads/)
+  e instala la versión actual. Marca la opción **Add Python to PATH**.
+- **Debian/Ubuntu:** instala `python3` y `python3-venv` desde el gestor de paquetes.
+
 ## Uso rápido
 
 1. Copia PDFs dentro de `input/`.
