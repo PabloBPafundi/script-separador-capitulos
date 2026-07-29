@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Archivos del usuario y resultados generados
+/input/*
+!/input/.gitkeep
+/output/*
+!/output/.gitkeep
+/logs/*
+!/logs/.gitkeep
+
+# Empaquetado
+build/
+dist/
+*.spec
