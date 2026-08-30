@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Desinstalar PDF Chapter Splitter
+Comment=Elimina PDF Chapter Splitter y sus archivos de usuario
+Exec=bash -c "\"__EXEC__\"; read -p 'Presioná Enter para cerrar...'"
+Icon=__ICON__
+Categories=Utility;
+Terminal=true

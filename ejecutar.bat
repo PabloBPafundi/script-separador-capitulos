@@ -70,7 +70,7 @@ if errorlevel 1 (
 echo.
 echo Iniciando procesamiento. Esto puede tardar unos minutos...
 echo ------------------------------------------------------------
-".venv\Scripts\python.exe" main.py
+".venv\Scripts\python.exe" -m cli.main
 set EXIT_CODE=%ERRORLEVEL%
 echo ------------------------------------------------------------
 

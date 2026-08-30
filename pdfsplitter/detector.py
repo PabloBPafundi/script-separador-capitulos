@@ -1,35 +1,43 @@
-"""Detección de capítulos por marcadores PDF o expresiones regulares."""
+"""Filtro de detección de capítulos por marcadores PDF o expresiones regulares."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-import fitz
+import pymupdf as fitz
 
-import config
-from utils import Chapter
+from pdfsplitter.models import Chapter
+from pdfsplitter.settings import PipelineSettings
+
+if TYPE_CHECKING:
+    from pdfsplitter.pipeline import PipelineData
 
 _CHAPTER_MARKER_PATTERN = re.compile(r"^CHAPTER([IVXLCDM]+)$")
 
 
-def detect_chapters(document: fitz.Document) -> list[Chapter]:
+class ChapterDetectionError(RuntimeError):
+    """Indica que no se pudo detectar capítulos con los ajustes recibidos."""
+
+
+def detect_chapters(document: fitz.Document, settings: PipelineSettings) -> list[Chapter]:
     """Detecta capítulos priorizando el índice del PDF y luego las regex."""
-    if config.USE_TOC_FIRST:
-        chapters = detect_from_toc(document)
+    if settings.use_toc_first:
+        chapters = detect_from_toc(document, settings)
         if chapters:
             return chapters
-    if config.USE_TYPOGRAPHIC_CHAPTER_DETECTION:
-        chapters = detect_from_chapter_headers(document)
+    if settings.use_typographic_chapter_detection:
+        chapters = detect_from_chapter_headers(document, settings)
         if chapters:
             return chapters
-    return detect_from_regex(document, config.CHAPTER_REGEX_PATTERNS)
+    return detect_from_regex(document, settings.chapter_regex_patterns, settings)
 
 
-def detect_from_toc(document: fitz.Document) -> list[Chapter]:
+def detect_from_toc(document: fitz.Document, settings: PipelineSettings) -> list[Chapter]:
     """Extrae capítulos del TOC de PyMuPDF para el nivel configurado."""
     toc = document.get_toc(simple=True)
-    entries = [entry for entry in toc if entry[0] == config.TOC_CHAPTER_LEVEL]
+    entries = [entry for entry in toc if entry[0] == settings.toc_chapter_level]
     if not entries:
         return []
 
@@ -41,14 +49,39 @@ def detect_from_toc(document: fitz.Document) -> list[Chapter]:
     return _chapters_from_starts(starts, document.page_count)
 
 
-def detect_from_regex(document: fitz.Document, patterns: Sequence[str]) -> list[Chapter]:
+def compile_patterns(patterns: Sequence[str]) -> list[re.Pattern[str]]:
+    """Compila las regex configuradas, descartando las líneas en blanco.
+
+    Un patrón vacío coincide en cada posición del texto, así que un salto de
+    línea de más en el campo de la GUI convertiría cada página en decenas de
+    capítulos: se ignora. Las que no compilan se reportan con su texto para que
+    el usuario pueda corregirlas.
+    """
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        if not pattern.strip():
+            continue
+        try:
+            compiled.append(re.compile(pattern, re.MULTILINE))
+        except re.error as error:
+            raise ChapterDetectionError(
+                f"La expresión regular '{pattern}' no es válida: {error}"
+            ) from error
+    return compiled
+
+
+def detect_from_regex(
+    document: fitz.Document, patterns: Sequence[str], settings: PipelineSettings
+) -> list[Chapter]:
     """Busca títulos de capítulo en cada página usando las regex configuradas."""
-    compiled_patterns = [re.compile(pattern, re.IGNORECASE | re.MULTILINE) for pattern in patterns]
+    compiled_patterns = compile_patterns(patterns)
+    if not compiled_patterns:
+        return []
     starts: list[tuple[str, int]] = []
     for page_index, page in enumerate(document):
         text = page.get_text("text")
-        if config.REGEX_SCAN_CHARACTERS is not None:
-            text = text[: config.REGEX_SCAN_CHARACTERS]
+        if settings.regex_scan_characters is not None:
+            text = text[: settings.regex_scan_characters]
         matches: list[tuple[int, str]] = []
         for pattern in compiled_patterns:
             for match in pattern.finditer(text):
@@ -64,7 +97,9 @@ def detect_from_regex(document: fitz.Document, patterns: Sequence[str]) -> list[
     return _chapters_from_starts(starts, document.page_count)
 
 
-def detect_from_chapter_headers(document: fitz.Document) -> list[Chapter]:
+def detect_from_chapter_headers(
+    document: fitz.Document, settings: PipelineSettings
+) -> list[Chapter]:
     """Detecta capítulos OCR por su marcador y la tipografía del título.
 
     Busca un marcador ``CHAPTER`` con número romano, incluso si el OCR espació
@@ -81,7 +116,7 @@ def detect_from_chapter_headers(document: fitz.Document) -> list[Chapter]:
                 continue
 
             chapter_label = f"CHAPTER {marker_match.group(1)}"
-            title_lines = _extract_title_lines(lines, line_index + 1)
+            title_lines = _extract_title_lines(lines, line_index + 1, settings)
             title = " ".join(title_lines)
             full_title = f"{chapter_label} - {title}" if title else chapter_label
             starts.append((full_title, page_index))
@@ -102,14 +137,14 @@ def _extract_page_lines(page: fitz.Page) -> list[tuple[float, float, str]]:
 
 
 def _extract_title_lines(
-    lines: Sequence[tuple[float, float, str]], start_index: int
+    lines: Sequence[tuple[float, float, str]], start_index: int, settings: PipelineSettings
 ) -> list[str]:
     """Recupera las líneas tipográficas que componen el título del capítulo."""
     title_lines: list[str] = []
-    for _, font_size, text in lines[start_index : start_index + config.CHAPTER_TITLE_MAX_LINES]:
+    for _, font_size, text in lines[start_index : start_index + settings.chapter_title_max_lines]:
         normalized = " ".join(text.split())
         is_uppercase_heading = len(normalized) > 1 and normalized.upper() == normalized
-        if font_size < config.CHAPTER_TITLE_MIN_FONT_SIZE or not is_uppercase_heading:
+        if font_size < settings.chapter_title_min_font_size or not is_uppercase_heading:
             break
         title_lines.append(normalized)
     return title_lines
@@ -130,3 +165,13 @@ def _chapters_from_starts(starts: Sequence[tuple[str, int]], page_count: int) ->
         end_page = start_page if next_page == start_page else next_page - 1
         chapters.append(Chapter(title=title, start_page=start_page, end_page=end_page))
     return chapters
+
+
+class DetectFilter:
+    """Filtro: detecta capítulos en PipelineData.document y setea PipelineData.chapters."""
+
+    name = "Detección de capítulos"
+
+    def process(self, data: "PipelineData") -> "PipelineData":
+        data.chapters = detect_chapters(data.document, data.settings)
+        return data

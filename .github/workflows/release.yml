@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar dependencias de Python
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Correr tests
+        shell: bash
+        run: python -m unittest discover -s tests -v
+
+      - name: Compilar frontend
+        shell: bash
+        run: |
+          npm --prefix gui/frontend ci
+          npm --prefix gui/frontend run build
+
+      - name: Empaquetar CLI (PyInstaller)
+        shell: bash
+        run: pyinstaller pdf-chapter-splitter.spec
+
+      - name: Empaquetar GUI (PyInstaller) - Windows
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: pyinstaller pdf-chapter-splitter-gui.spec
+
+      # En Linux, pywebview necesita los bindings de GTK (`gi`) del sistema, que
+      # viven en el Python del sistema operativo, no en el que instala
+      # actions/setup-python. Por eso el binario de la GUI se arma con un venv
+      # aparte creado a partir de /usr/bin/python3 con --system-site-packages,
+      # después de instalar esos paquetes de sistema con apt.
+      - name: Instalar WebKitGTK (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi python3-venv gir1.2-webkit2-4.1 || \
+          sudo apt-get install -y python3-gi python3-venv gir1.2-webkit2-4.0
+
+      - name: Empaquetar GUI (PyInstaller) - Linux
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          /usr/bin/python3 -m venv --system-site-packages /tmp/gui-build-venv
+          /tmp/gui-build-venv/bin/pip install --disable-pip-version-check -q -r requirements.txt pyinstaller
+          /tmp/gui-build-venv/bin/pyinstaller pdf-chapter-splitter-gui.spec
+
+      - name: Determinar versión
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Renombrar binarios para la Release (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cp dist/pdf-chapter-splitter release-assets/pdf-chapter-splitter-cli-linux
+          cp dist/pdf-chapter-splitter-gui release-assets/pdf-chapter-splitter-gui-linux
+          chmod +x release-assets/*
+
+      - name: Armar instalador de usuario (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          STAGE=pdf-chapter-splitter-installer
+          mkdir -p "$STAGE/bin"
+          cp dist/pdf-chapter-splitter-gui "$STAGE/bin/"
+          cp dist/pdf-chapter-splitter "$STAGE/bin/"
+          cp packaging/icon.png "$STAGE/"
+          cp packaging/linux/install.sh "$STAGE/"
+          cp packaging/linux/pdf-chapter-splitter.desktop.template "$STAGE/"
+          cp packaging/linux/pdf-chapter-splitter-uninstall.desktop.template "$STAGE/"
+          chmod +x "$STAGE/install.sh" "$STAGE/bin/"*
+          tar czf release-assets/pdf-chapter-splitter-gui-linux-installer.tar.gz "$STAGE"
+
+      - name: Renombrar binarios para la Release (Windows)
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cp dist/pdf-chapter-splitter.exe release-assets/pdf-chapter-splitter-cli-windows.exe
+          cp dist/pdf-chapter-splitter-gui.exe release-assets/pdf-chapter-splitter-gui-windows.exe
+
+      - name: Instalar Inno Setup
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Compilar instalador de usuario (Windows)
+        if: matrix.platform == 'windows'
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.version.outputs.value }} packaging\windows\installer.iss
+
+      - name: Copiar instalador de Windows a la Release
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: cp dist/pdf-chapter-splitter-gui-setup.exe release-assets/pdf-chapter-splitter-gui-setup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binarios-${{ matrix.platform }}
+          path: release-assets/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*

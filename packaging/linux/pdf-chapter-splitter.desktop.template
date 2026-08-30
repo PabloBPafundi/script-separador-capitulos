@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PDF Chapter Splitter
+Comment=Divide libros PDF en un archivo por capítulo
+Exec="__EXEC__"
+Icon=__ICON__
+Categories=Utility;Office;
+Terminal=false

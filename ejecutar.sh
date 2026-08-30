@@ -76,7 +76,7 @@ fi
 echo
 echo "Iniciando procesamiento. Esto puede tardar unos minutos..."
 echo "------------------------------------------------------------"
-"$VENV_DIR/bin/python" "$SCRIPT_DIR/main.py"
+(cd "$SCRIPT_DIR" && "$VENV_DIR/bin/python" -m cli.main)
 EXIT_CODE=$?
 echo "------------------------------------------------------------"
 

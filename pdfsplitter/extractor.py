@@ -1,10 +1,14 @@
-"""Acceso al documento PDF mediante PyMuPDF."""
+"""Filtro que abre y valida el documento PDF (primer paso del pipeline)."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import fitz
+import pymupdf as fitz
+
+if TYPE_CHECKING:
+    from pdfsplitter.pipeline import PipelineData
 
 
 class PDFExtractionError(RuntimeError):
@@ -32,3 +36,13 @@ def open_pdf(pdf_path: Path) -> fitz.Document:
         document.close()
         raise PDFExtractionError("El PDF está protegido con contraseña.")
     return document
+
+
+class OpenFilter:
+    """Filtro: abre PipelineData.input_pdf y setea PipelineData.document."""
+
+    name = "Apertura del PDF"
+
+    def process(self, data: "PipelineData") -> "PipelineData":
+        data.document = open_pdf(data.input_pdf)
+        return data
